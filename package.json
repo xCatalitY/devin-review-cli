@@ -1,6 +1,7 @@
 {
   "name": "devin-bugs",
   "version": "0.1.0",
+  "description": "CLI to extract unresolved bugs from Devin AI code reviews",
   "type": "module",
   "bin": {
     "devin-bugs": "./src/cli.ts"
@@ -8,6 +9,30 @@
   "scripts": {
     "start": "bun src/cli.ts",
     "typecheck": "bunx tsc --noEmit"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "devin",
+    "code-review",
+    "cli",
+    "bugs",
+    "pr-review",
+    "ai"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xCatalitY/devin-review-cli.git"
+  },
+  "homepage": "https://github.com/xCatalitY/devin-review-cli",
+  "bugs": "https://github.com/xCatalitY/devin-review-cli/issues",
+  "license": "MIT",
+  "author": "xCatalitY",
+  "engines": {
+    "bun": ">=1.0.0"
   },
   "devDependencies": {
     "@types/bun": "latest",

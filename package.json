@@ -1,0 +1,16 @@
+{
+  "name": "devin-bugs",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "devin-bugs": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun src/cli.ts",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,20 +1,19 @@
 {
   "name": "devin-bugs",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "CLI to extract unresolved bugs from Devin AI code reviews",
   "type": "module",
   "bin": {
-    "devin-bugs": "bin/devin-bugs.js"
+    "devin-bugs": "dist/cli.js"
   },
   "scripts": {
+    "build": "bun build src/cli.ts --outfile dist/cli.js --target node --minify && sed -i '1s|#!/usr/bin/env bun|#!/usr/bin/env node|' dist/cli.js && chmod +x dist/cli.js",
     "start": "bun src/cli.ts",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "files": [
-    "bin/",
-    "src/",
-    "README.md",
-    "LICENSE"
+    "dist/"
   ],
   "keywords": [
     "devin",
@@ -33,7 +32,7 @@
   "license": "MIT",
   "author": "xCatalitY",
   "engines": {
-    "bun": ">=1.0.0"
+    "node": ">=18.0.0"
   },
   "devDependencies": {
     "@types/bun": "latest",

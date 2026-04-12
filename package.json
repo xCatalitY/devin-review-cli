@@ -1,10 +1,10 @@
 {
   "name": "devin-bugs",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI to extract unresolved bugs from Devin AI code reviews",
   "type": "module",
   "bin": {
-    "devin-bugs": "./bin/devin-bugs"
+    "devin-bugs": "./bin/devin-bugs.mjs"
   },
   "scripts": {
     "start": "bun src/cli.ts",

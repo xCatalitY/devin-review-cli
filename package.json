@@ -4,13 +4,14 @@
   "description": "CLI to extract unresolved bugs from Devin AI code reviews",
   "type": "module",
   "bin": {
-    "devin-bugs": "./src/cli.ts"
+    "devin-bugs": "./bin/devin-bugs"
   },
   "scripts": {
     "start": "bun src/cli.ts",
     "typecheck": "bunx tsc --noEmit"
   },
   "files": [
+    "bin/",
     "src/",
     "README.md",
     "LICENSE"

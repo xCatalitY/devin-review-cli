@@ -20,6 +20,8 @@ export interface CachedToken {
   obtainedAt: number;
   /** epoch ms when token expires (from JWT `exp` claim) */
   expiresAt: number;
+  /** Auth0 localStorage cache entries (may contain refresh tokens) */
+  auth0Cache?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------

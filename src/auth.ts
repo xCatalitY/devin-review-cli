@@ -48,16 +48,158 @@ function readCachedToken(): CachedToken | null {
   }
 }
 
-function writeCachedToken(accessToken: string): CachedToken {
+function writeCachedToken(
+  accessToken: string,
+  auth0Cache?: Record<string, string>
+): CachedToken {
   ensureDir(dirname(TOKEN_PATH));
   const expiresAt = decodeTokenExpiry(accessToken);
   const cached: CachedToken = {
     accessToken,
     obtainedAt: Date.now(),
     expiresAt,
+    ...(auth0Cache && Object.keys(auth0Cache).length > 0 ? { auth0Cache } : {}),
   };
   writeFileSync(TOKEN_PATH, JSON.stringify(cached, null, 2));
   return cached;
+}
+
+// ---------------------------------------------------------------------------
+// Refresh token flow
+// ---------------------------------------------------------------------------
+
+/**
+ * Try to refresh the access token using stored Auth0 cache data.
+ *
+ * Auth0 SPA SDK stores tokens in localStorage under keys like:
+ *   @@auth0spajs@@::{clientId}::{audience}::{scope}
+ * The value is JSON with { body: { refresh_token, ... } }
+ *
+ * To refresh, POST to https://{domain}/oauth/token with:
+ *   { grant_type: "refresh_token", client_id, refresh_token }
+ *
+ * We extract clientId from the cache key and domain from the
+ * `auth0.{clientId}.is.authenticated` cookie name pattern.
+ */
+async function tryRefreshToken(cached: CachedToken): Promise<string | null> {
+  if (!cached.auth0Cache) return null;
+
+  // Find the @@auth0spajs@@ entry with a refresh_token
+  let refreshToken: string | null = null;
+  let clientId: string | null = null;
+  let audience: string | null = null;
+
+  for (const [key, value] of Object.entries(cached.auth0Cache)) {
+    if (!key.startsWith("@@auth0spajs@@")) continue;
+
+    // Key format: @@auth0spajs@@::{clientId}::{audience}::{scope}
+    const parts = key.split("::");
+    const keyClientId = parts[1];
+    const keyAudience = parts[2];
+
+    try {
+      const parsed = JSON.parse(value) as {
+        body?: { refresh_token?: string; [k: string]: unknown };
+      };
+      if (parsed.body?.refresh_token) {
+        refreshToken = parsed.body.refresh_token;
+        clientId = keyClientId ?? null;
+        audience = keyAudience ?? null;
+        break;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  if (!refreshToken || !clientId) return null;
+
+  // Find the Auth0 domain from the is.authenticated cookie key
+  // or from the @@auth0spajs@@ key suffix pattern
+  // The domain is typically stored in another localStorage key or we can
+  // try the common Devin Auth0 tenant domains
+  let domain: string | null = null;
+  for (const key of Object.keys(cached.auth0Cache)) {
+    // Pattern: auth0.{clientId}.is.authenticated — doesn't help with domain
+    // But there might be other keys with the domain
+    if (key.includes("https://") && key.includes("auth0")) {
+      const match = key.match(/https:\/\/([^/]+)/);
+      if (match?.[1]) {
+        domain = match[1];
+        break;
+      }
+    }
+  }
+
+  // If we can't find the domain in cache, try extracting from the access token issuer
+  if (!domain) {
+    try {
+      const payload = JSON.parse(base64UrlDecode(cached.accessToken.split(".")[1]!));
+      if (typeof payload.iss === "string") {
+        const issuerUrl = new URL(payload.iss);
+        domain = issuerUrl.hostname;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!domain) {
+    console.error("\x1b[33m▸ Could not determine Auth0 domain for token refresh.\x1b[0m");
+    return null;
+  }
+
+  // Call Auth0 token endpoint
+  try {
+    console.error("\x1b[33m▸ Refreshing token...\x1b[0m");
+    const res = await fetch(`https://${domain}/oauth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        client_id: clientId,
+        refresh_token: refreshToken,
+        ...(audience ? { audience } : {}),
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(`\x1b[33m▸ Refresh failed (${res.status}): ${body.slice(0, 100)}\x1b[0m`);
+      return null;
+    }
+
+    const data = (await res.json()) as {
+      access_token?: string;
+      refresh_token?: string;
+    };
+
+    if (!data.access_token) return null;
+
+    // Update the cached auth0 entry with new refresh token if rotated
+    if (data.refresh_token && cached.auth0Cache) {
+      for (const [key, value] of Object.entries(cached.auth0Cache)) {
+        if (!key.startsWith("@@auth0spajs@@")) continue;
+        try {
+          const parsed = JSON.parse(value);
+          if (parsed.body?.refresh_token) {
+            parsed.body.refresh_token = data.refresh_token;
+            parsed.body.access_token = data.access_token;
+            cached.auth0Cache[key] = JSON.stringify(parsed);
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+    }
+
+    console.error("\x1b[32m✓ Token refreshed!\x1b[0m\n");
+    return data.access_token;
+  } catch (err) {
+    console.error(`\x1b[33m▸ Refresh error: ${err instanceof Error ? err.message : err}\x1b[0m`);
+    return null;
+  }
 }
 
 function clearCachedToken(): void {
@@ -180,7 +322,7 @@ function buildCapturePage(port: number): string {
         <div class="step-num">2</div>
         <div class="step-text">
           Open the browser console (<strong>F12</strong> → Console tab) and paste:
-          <code id="snippet" onclick="copySnippet()">fetch('http://localhost:${port}/callback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:await __HACK__getAccessToken()})}).then(()=>document.title='✓ Token sent!')</code>
+          <code id="snippet" onclick="copySnippet()">{let t=await __HACK__getAccessToken(),c={};for(let i=0;i&lt;localStorage.length;i++){let k=localStorage.key(i);if(k&amp;&amp;k.includes('auth0'))c[k]=localStorage.getItem(k)}fetch('http://localhost:${port}/callback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t,auth0Cache:c})}).then(()=>document.title='✓ Token sent!')}</code>
         </div>
       </div>
 
@@ -228,7 +370,11 @@ function buildCapturePage(port: number): string {
  * - Receives the token at POST /callback (from the console one-liner)
  * - Reports status at GET /status (for the page to poll)
  */
-function startCallbackServer(): Promise<{ token: string; server: Server }> {
+function startCallbackServer(): Promise<{
+  token: string;
+  auth0Cache?: Record<string, string>;
+  server: Server;
+}> {
   return new Promise((resolve, reject) => {
     let receivedToken: string | null = null;
 
@@ -255,15 +401,23 @@ function startCallbackServer(): Promise<{ token: string; server: Server }> {
         req.on("data", (chunk: Buffer) => (body += chunk.toString()));
         req.on("end", () => {
           try {
-            const data = JSON.parse(body) as { token?: string };
+            const data = JSON.parse(body) as {
+              token?: string;
+              auth0Cache?: Record<string, string>;
+            };
             if (typeof data.token === "string" && data.token.length > 20) {
               receivedToken = data.token;
+              const auth0Cache = data.auth0Cache;
+              if (auth0Cache && Object.keys(auth0Cache).length > 0) {
+                console.error(
+                  `\x1b[36m▸ Captured ${Object.keys(auth0Cache).length} Auth0 cache entries\x1b[0m`
+                );
+              }
               res.writeHead(200, { "Content-Type": "application/json" });
               res.end(JSON.stringify({ ok: true }));
-              // Resolve after a short delay to let the page poll /status
               setTimeout(() => {
                 server.close();
-                resolve({ token: receivedToken!, server });
+                resolve({ token: receivedToken!, auth0Cache, server });
               }, 500);
               return;
             }
@@ -320,7 +474,8 @@ export interface GetTokenOptions {
  * Get a valid Devin API auth token. Strategy:
  * 1. DEVIN_TOKEN env var (for CI/scripts)
  * 2. Cached token from disk (if not expired)
- * 3. Interactive login via system browser + localhost callback
+ * 3. Refresh token (if cached Auth0 data has a refresh_token)
+ * 4. Interactive login via system browser + localhost callback
  */
 export async function getToken(opts?: GetTokenOptions): Promise<string> {
   // 1. Environment variable override
@@ -329,27 +484,36 @@ export async function getToken(opts?: GetTokenOptions): Promise<string> {
     return envToken;
   }
 
-  // 2. Cached token
+  // 2. Cached token (still valid)
   if (!opts?.noCache) {
     const cached = readCachedToken();
     if (cached && isTokenValid(cached)) {
       return cached.accessToken;
     }
+
+    // 3. Try refresh token (cached but expired access token)
+    if (cached?.auth0Cache) {
+      const refreshed = await tryRefreshToken(cached);
+      if (refreshed) {
+        writeCachedToken(refreshed, cached.auth0Cache);
+        return refreshed;
+      }
+    }
   }
 
-  // 3. Interactive login via browser
-  const { token } = await startCallbackServer();
+  // 4. Interactive login via browser
+  const { token, auth0Cache } = await startCallbackServer();
   console.error("\x1b[32m✓ Authentication successful!\x1b[0m\n");
-  writeCachedToken(token);
+  writeCachedToken(token, auth0Cache);
   return token;
 }
 
 /** Force re-authentication by clearing cache and launching browser */
 export async function forceReauth(): Promise<string> {
   clearCachedToken();
-  const { token } = await startCallbackServer();
+  const { token, auth0Cache } = await startCallbackServer();
   console.error("\x1b[32m✓ Authentication successful!\x1b[0m\n");
-  writeCachedToken(token);
+  writeCachedToken(token, auth0Cache);
   return token;
 }
 

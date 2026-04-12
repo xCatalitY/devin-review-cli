@@ -114,34 +114,15 @@ async function tryRefreshToken(cached: CachedToken): Promise<string | null> {
 
   if (!refreshToken || !clientId) return null;
 
-  // Find the Auth0 domain from the is.authenticated cookie key
-  // or from the @@auth0spajs@@ key suffix pattern
-  // The domain is typically stored in another localStorage key or we can
-  // try the common Devin Auth0 tenant domains
+  // Extract Auth0 domain from the JWT issuer claim (e.g. "https://auth.devin.ai/")
   let domain: string | null = null;
-  for (const key of Object.keys(cached.auth0Cache)) {
-    // Pattern: auth0.{clientId}.is.authenticated — doesn't help with domain
-    // But there might be other keys with the domain
-    if (key.includes("https://") && key.includes("auth0")) {
-      const match = key.match(/https:\/\/([^/]+)/);
-      if (match?.[1]) {
-        domain = match[1];
-        break;
-      }
+  try {
+    const payload = JSON.parse(base64UrlDecode(cached.accessToken.split(".")[1]!));
+    if (typeof payload.iss === "string") {
+      domain = new URL(payload.iss).hostname;
     }
-  }
-
-  // If we can't find the domain in cache, try extracting from the access token issuer
-  if (!domain) {
-    try {
-      const payload = JSON.parse(base64UrlDecode(cached.accessToken.split(".")[1]!));
-      if (typeof payload.iss === "string") {
-        const issuerUrl = new URL(payload.iss);
-        domain = issuerUrl.hostname;
-      }
-    } catch {
-      // ignore
-    }
+  } catch {
+    // ignore
   }
 
   if (!domain) {
@@ -151,8 +132,9 @@ async function tryRefreshToken(cached: CachedToken): Promise<string | null> {
 
   // Call Auth0 token endpoint
   try {
-    console.error("\x1b[33m▸ Refreshing token...\x1b[0m");
-    const res = await fetch(`https://${domain}/oauth/token`, {
+    const tokenUrl = `https://${domain}/oauth/token`;
+    console.error(`\x1b[33m▸ Refreshing token via ${tokenUrl}\x1b[0m`);
+    const res = await fetch(tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

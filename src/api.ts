@@ -70,12 +70,109 @@ export async function fetchPRInfo(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Job status types
+// ---------------------------------------------------------------------------
+
+export interface JobVersion {
+  id: string;
+  created_at: string;
+  metadata: {
+    completed: string[];
+    is_finished: boolean;
+  };
+}
+
+export interface ReviewJob {
+  job_id: string;
+  status: string; // "completed" | "running" | "pending" | "failed"
+  pr_number: number;
+  commit_sha: string;
+  job_type: string;
+  created_at: string;
+  updated_at: string;
+  versions: JobVersion[];
+}
+
+export interface JobsResponse {
+  jobs: ReviewJob[];
+}
+
 export async function fetchJobs(
   prPath: string,
   token: string
-): Promise<{ jobs: unknown[] }> {
-  return apiRequest<{ jobs: unknown[] }>(
+): Promise<JobsResponse> {
+  return apiRequest<JobsResponse>(
     `pr-review/jobs?pr_path=${encodeURIComponent(prPath)}`,
     token
   );
+}
+
+/**
+ * Get the review status for display purposes.
+ * Returns a human-readable status based on the latest job.
+ */
+export function getReviewStatus(jobs: JobsResponse): {
+  status: "no_review" | "running" | "completed" | "failed";
+  message: string;
+  stages?: { completed: string[]; total: string[] };
+} {
+  if (jobs.jobs.length === 0) {
+    return { status: "no_review", message: "No Devin review has been triggered for this PR." };
+  }
+
+  // Latest job is first (sorted by created_at desc from API, but let's sort to be safe)
+  const latest = jobs.jobs.sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  )[0]!;
+
+  const allStages = ["lifeguard", "groups", "copy_detection", "display_info"];
+
+  if (latest.status === "completed") {
+    const lastVersion = latest.versions[latest.versions.length - 1];
+    if (lastVersion?.metadata.is_finished) {
+      return {
+        status: "completed",
+        message: "Devin review complete.",
+        stages: { completed: allStages, total: allStages },
+      };
+    }
+  }
+
+  if (latest.status === "running" || (latest.status === "completed" && latest.versions.length > 0)) {
+    const lastVersion = latest.versions[latest.versions.length - 1];
+    const completed = lastVersion?.metadata.completed ?? [];
+    const stageLabels: Record<string, string> = {
+      lifeguard: "Bug detection",
+      groups: "File grouping",
+      copy_detection: "Copy detection",
+      display_info: "Finalizing",
+    };
+
+    if (!lastVersion?.metadata.is_finished) {
+      const currentStage = allStages.find((s) => !completed.includes(s));
+      const currentLabel = currentStage ? stageLabels[currentStage] ?? currentStage : "Processing";
+      return {
+        status: "running",
+        message: `Devin review in progress: ${currentLabel} (${completed.length}/${allStages.length} stages)`,
+        stages: { completed, total: allStages },
+      };
+    }
+
+    return {
+      status: "completed",
+      message: "Devin review complete.",
+      stages: { completed, total: allStages },
+    };
+  }
+
+  if (latest.status === "failed") {
+    return { status: "failed", message: "Devin review failed." };
+  }
+
+  return {
+    status: "running",
+    message: "Devin review pending...",
+    stages: { completed: [], total: allStages },
+  };
 }

@@ -3,9 +3,9 @@
 import { parseArgs } from "node:util";
 import { parsePR } from "./parse-pr.js";
 import { getToken, forceReauth } from "./auth.js";
-import { fetchDigest, AuthExpiredError, ApiError } from "./api.js";
+import { fetchDigest, fetchJobs, getReviewStatus, AuthExpiredError, ApiError } from "./api.js";
 import { extractFlags } from "./filter.js";
-import { formatTerminal, formatJSON } from "./format.js";
+import { formatTerminal, formatJSON, formatStatus } from "./format.js";
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
@@ -18,8 +18,9 @@ const HELP = `
     devin-bugs <pr> [options]
 
   \x1b[1mArguments:\x1b[0m
-    pr              GitHub PR URL or shorthand
+    pr              GitHub PR URL, shorthand, or just a number (in a git repo)
                     Examples: owner/repo#123
+                              49 (infers repo from git remote)
                               https://github.com/owner/repo/pull/123
                               https://app.devin.ai/review/owner/repo/pull/123
 
@@ -48,7 +49,7 @@ function printHelp(): void {
 }
 
 function printVersion(): void {
-  console.log("devin-bugs 0.3.1");
+  console.log("devin-bugs 0.4.0");
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +177,23 @@ async function main(): Promise<void> {
   const flags = extractFlags(digest!, {
     includeAnalysis: values.all,
   });
+
+  // When no bugs found, check job status to explain why
+  if (flags.length === 0) {
+    try {
+      const jobsData = await fetchJobs(pr.prPath, token);
+      const reviewStatus = getReviewStatus(jobsData);
+
+      if (values.json) {
+        console.log(JSON.stringify({ bugs: [], status: reviewStatus }, null, 2));
+      } else {
+        console.log(formatStatus(reviewStatus, pr));
+      }
+      return;
+    } catch {
+      // Jobs endpoint failed — fall through to normal output
+    }
+  }
 
   // Output
   if (values.json) {

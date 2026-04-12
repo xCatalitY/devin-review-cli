@@ -154,6 +154,66 @@ export function formatTerminal(flags: LifeguardFlag[], pr: ParsedPR): string {
 }
 
 // ---------------------------------------------------------------------------
+// Status formatter (when no bugs found)
+// ---------------------------------------------------------------------------
+
+export function formatStatus(
+  status: {
+    status: "no_review" | "running" | "completed" | "failed";
+    message: string;
+    stages?: { completed: string[]; total: string[] };
+  },
+  pr: ParsedPR
+): string {
+  const lines: string[] = [];
+  const prRef = `${c.dim}${pr.owner}/${pr.repo}#${pr.number}${c.reset}`;
+
+  const stageLabels: Record<string, string> = {
+    lifeguard: "Bug detection",
+    groups: "File grouping",
+    copy_detection: "Copy detection",
+    display_info: "Finalizing",
+  };
+
+  switch (status.status) {
+    case "no_review":
+      lines.push(`\n  ${c.yellow}No Devin review${c.reset} for ${prRef}`);
+      lines.push(`  ${c.dim}Devin hasn't been triggered on this PR yet.${c.reset}\n`);
+      break;
+
+    case "running": {
+      const stages = status.stages;
+      lines.push(`\n  ${c.yellow}${c.bold}Devin review in progress${c.reset} for ${prRef}\n`);
+
+      if (stages) {
+        for (const stage of stages.total) {
+          const done = stages.completed.includes(stage);
+          const label = stageLabels[stage] ?? stage;
+          const icon = done ? `${c.green}✓${c.reset}` : `${c.yellow}○${c.reset}`;
+          lines.push(`  ${icon} ${done ? c.dim : c.white}${label}${c.reset}`);
+        }
+        lines.push("");
+      }
+
+      lines.push(`  ${c.dim}Bugs will appear once the review completes.${c.reset}\n`);
+      break;
+    }
+
+    case "completed":
+      lines.push(`\n  ${c.green}${c.bold}No unresolved bugs${c.reset} in ${prRef}`);
+      lines.push(`  ${c.dim}Devin review complete — all clear.${c.reset}\n`);
+      break;
+
+    case "failed":
+      lines.push(`\n  ${c.red}Devin review failed${c.reset} for ${prRef}`);
+      lines.push(`  ${c.dim}The review job encountered an error.${c.reset}\n`);
+      break;
+  }
+
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // JSON formatter
 // ---------------------------------------------------------------------------
 

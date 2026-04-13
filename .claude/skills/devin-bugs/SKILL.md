@@ -21,58 +21,88 @@ If not installed, tell the user to run the command above first.
 
 ## How to run
 
+Always set `DEVIN_BUGS_NONINTERACTIVE=1` so the CLI exits cleanly if auth is needed instead of trying to open a browser:
+
 ```bash
-devin-bugs $ARGUMENTS
+DEVIN_BUGS_NONINTERACTIVE=1 devin-bugs $ARGUMENTS --json
 ```
 
-If `$ARGUMENTS` is empty, ask the user for the PR reference (e.g. `owner/repo#123`).
+If `$ARGUMENTS` is empty, infer the PR from git remote and ask the user for the PR number.
 
 ## Input formats
 
 The tool accepts any of these:
 - `owner/repo#123`
+- `123` (infers repo from git remote)
 - `https://github.com/owner/repo/pull/123`
 - `https://app.devin.ai/review/owner/repo/pull/123`
 
-## Getting structured data
+## Handling exit codes
 
-For analysis, always prefer JSON output:
+| Exit code | Meaning | What to do |
+|-----------|---------|------------|
+| `0` | Success | Parse JSON output normally |
+| `1` | Error | Read stderr, surface the error message to the user |
+| `10` | Auth required | Tell the user: "Devin authentication is needed. Run `! devin-bugs --login` to log in, then I'll retry." After user completes login, re-run the original command. |
+| `127` | Not installed | Tell the user: "devin-bugs is not installed. Run `npm install -g devin-bugs` to install it." |
 
-```bash
-devin-bugs $ARGUMENTS --json
+**Important:** When exit code is 10, do NOT silently retry or ignore the error. The user must complete browser-based login interactively.
+
+## JSON output schema (v0.5.0+)
+
+The `--json` flag outputs:
+
+```json
+{
+  "status": {
+    "status": "completed | running | no_review | failed",
+    "message": "Human-readable status message",
+    "stages": {
+      "completed": ["lifeguard", "groups"],
+      "total": ["lifeguard", "groups", "copy_detection", "display_info"]
+    }
+  },
+  "bugs": [
+    {
+      "filePath": "src/example.ts",
+      "startLine": 42,
+      "endLine": 50,
+      "side": "RIGHT",
+      "title": "Short description",
+      "description": "Full explanation",
+      "severity": "severe | warning | info",
+      "recommendation": "Suggested fix",
+      "type": "lifeguard-bug | lifeguard-analysis",
+      "isResolved": false,
+      "isOutdated": false,
+      "htmlUrl": "https://github.com/..."
+    }
+  ]
+}
 ```
 
-Each bug in the JSON array has:
-- `filePath` — file with the bug
-- `startLine` / `endLine` — line range
-- `title` — short description
-- `description` — full explanation with code references
-- `severity` — `severe`, `warning`, or `info`
-- `recommendation` — suggested fix
-- `type` — `lifeguard-bug` (actual bug) or `lifeguard-analysis` (suggestion)
-- `htmlUrl` — link to the GitHub comment
+## Interpreting review status
+
+After parsing the JSON, check `status.status`:
+
+- **`completed`**: Review is done. Report bugs normally.
+- **`running`**: Devin is still reviewing (or re-reviewing after a PR update). Tell the user:
+  - "Devin is still reviewing this PR ({stages.completed.length}/{stages.total.length} stages complete)."
+  - If bugs are present: "These bugs are from a previous review and may change once the current review finishes."
+  - Suggest re-running later for fresh results.
+- **`no_review`**: Devin hasn't been triggered on this PR. Tell the user.
+- **`failed`**: The review job failed. Tell the user.
 
 ## Flags
 
 | Flag | Purpose |
 |------|---------|
-| `--json` | JSON output for parsing and analysis |
+| `--json` | JSON output (always use this in the skill) |
 | `--all` | Include analysis suggestions, not just bugs |
 | `--raw` | Dump full API response (debug) |
 | `--no-cache` | Force re-authentication |
 | `--login` | Just authenticate, don't fetch anything |
 | `--logout` | Clear stored credentials |
-
-## Authentication
-
-The tool handles auth automatically:
-1. **First run**: opens browser to a local instruction page. User logs in to app.devin.ai, then pastes a one-liner in the browser console.
-2. **Subsequent runs**: uses cached token. When it expires (~30min), silently refreshes via Auth0 refresh token — no browser needed.
-3. **CI/scripts**: set `DEVIN_TOKEN` env var to skip browser auth entirely.
-
-Token cached at `~/.config/devin-bugs/token.json`.
-
-If auth fails, suggest `devin-bugs --login` to re-authenticate.
 
 ## After fetching
 

@@ -397,6 +397,7 @@ function startCallbackServer(): Promise<{
   return new Promise((resolve, reject) => {
     let receivedToken: string | null = null;
     let waitingInterval: ReturnType<typeof setInterval> | null = null;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
     const server = createServer((req, res) => {
       // CORS headers for cross-origin fetch from app.devin.ai
@@ -437,6 +438,7 @@ function startCallbackServer(): Promise<{
               res.end(JSON.stringify({ ok: true }));
               setTimeout(() => {
                 if (waitingInterval) clearInterval(waitingInterval);
+                if (timeoutHandle) clearTimeout(timeoutHandle);
                 server.close();
                 resolve({ token: receivedToken!, auth0Cache, server });
               }, 500);
@@ -473,21 +475,23 @@ function startCallbackServer(): Promise<{
 
       openBrowser(loginUrl);
 
-      // Periodic "still waiting" messages
+      // Periodic "still waiting" messages (unref so it doesn't block exit)
       waitingInterval = setInterval(() => {
         if (!receivedToken) {
           console.error(`\x1b[33m  Still waiting for login...\x1b[0m`);
         }
       }, 30_000);
+      waitingInterval.unref();
 
-      // Timeout after 5 minutes
-      setTimeout(() => {
+      // Timeout after 5 minutes (unref so it doesn't block exit)
+      timeoutHandle = setTimeout(() => {
         if (waitingInterval) clearInterval(waitingInterval);
         if (!receivedToken) {
           server.close();
           reject(new Error("Login timed out after 5 minutes."));
         }
       }, 5 * 60 * 1000);
+      timeoutHandle.unref();
     });
 
     server.on("error", (err) => {

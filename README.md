@@ -52,13 +52,13 @@ devin-bugs https://app.devin.ai/review/owner/repo/pull/123
 
 ```bash
 # Get bugs as JSON for scripting
-devin-bugs owner/repo#46 --json | jq '.[].title'
+devin-bugs owner/repo#46 --json | jq '.bugs[].title'
 
 # Include all flags (bugs + analysis suggestions)
 devin-bugs owner/repo#46 --all
 
 # Pipe to another tool
-devin-bugs owner/repo#46 --json | jq '.[] | select(.severity == "severe")'
+devin-bugs owner/repo#46 --json | jq '.bugs[] | select(.severity == "severe")'
 
 # Skip browser, use token directly
 DEVIN_TOKEN=eyJ... devin-bugs owner/repo#46
@@ -75,6 +75,14 @@ On first run, the CLI opens your browser to a local page with instructions:
 Subsequent runs use the cached token automatically. Tokens are stored at `~/.config/devin-bugs/token.json`.
 
 For CI or headless environments, set `DEVIN_TOKEN` as an environment variable.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Error (API failure, network error, etc.) |
+| `10` | Authentication required (non-interactive context) |
 
 ## How it works
 
@@ -97,6 +105,15 @@ The CLI reverse-engineers Devin's internal PR review API:
 ## JSON output schema
 
 ```typescript
+interface Output {
+  status: {
+    status: "completed" | "running" | "no_review" | "failed";
+    message: string;
+    stages?: { completed: string[]; total: string[] };
+  };
+  bugs: Bug[];
+}
+
 interface Bug {
   filePath: string;       // "lib/apply/assist.ts"
   startLine: number;      // 124

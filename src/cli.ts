@@ -2,10 +2,11 @@
 
 import { parseArgs } from "node:util";
 import { parsePR } from "./parse-pr.js";
-import { getToken, forceReauth } from "./auth.js";
+import { getToken, forceReauth, AuthRequiredError } from "./auth.js";
 import { fetchDigest, fetchJobs, getReviewStatus, AuthExpiredError, ApiError } from "./api.js";
 import { extractFlags } from "./filter.js";
-import { formatTerminal, formatJSON, formatStatus } from "./format.js";
+import { formatTerminal, formatJSON } from "./format.js";
+import type { ReviewStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
@@ -49,7 +50,7 @@ function printHelp(): void {
 }
 
 function printVersion(): void {
-  console.log("devin-bugs 0.4.0");
+  console.log("devin-bugs 0.5.0");
 }
 
 // ---------------------------------------------------------------------------
@@ -97,7 +98,16 @@ async function main(): Promise<void> {
 
   // --login: just authenticate and exit
   if (values.login) {
-    const token = await getToken({ noCache: values["no-cache"] });
+    let token: string;
+    try {
+      token = await getToken({ noCache: values["no-cache"] });
+    } catch (err: any) {
+      if (err instanceof AuthRequiredError) {
+        console.error(`\x1b[33m⚠ ${err.message}\x1b[0m`);
+        process.exit(10);
+      }
+      throw err;
+    }
     console.error("\x1b[32m✓ Authenticated successfully.\x1b[0m");
     console.error(`  Token cached for future use.\n`);
     // Show token expiry
@@ -134,6 +144,10 @@ async function main(): Promise<void> {
   try {
     token = await getToken({ noCache: values["no-cache"] });
   } catch (err: any) {
+    if (err instanceof AuthRequiredError) {
+      console.error(`\x1b[33m⚠ ${err.message}\x1b[0m`);
+      process.exit(10);
+    }
     console.error(`\x1b[31mAuth error:\x1b[0m ${err.message}`);
     process.exit(1);
   }
@@ -150,6 +164,10 @@ async function main(): Promise<void> {
         token = await forceReauth();
         digest = await fetchDigest(pr.prPath, token);
       } catch (retryErr: any) {
+        if (retryErr instanceof AuthRequiredError) {
+          console.error(`\x1b[33m⚠ ${retryErr.message}\x1b[0m`);
+          process.exit(10);
+        }
         console.error(`\x1b[31mError:\x1b[0m ${retryErr.message}`);
         process.exit(1);
       }
@@ -173,33 +191,25 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Always fetch job status for review state
+  let reviewStatus: ReviewStatus | undefined;
+  try {
+    const jobsData = await fetchJobs(pr.prPath, token);
+    reviewStatus = getReviewStatus(jobsData);
+  } catch {
+    // Jobs endpoint failed — continue without status
+  }
+
   // Extract and filter flags
   const flags = extractFlags(digest!, {
     includeAnalysis: values.all,
   });
 
-  // When no bugs found, check job status to explain why
-  if (flags.length === 0) {
-    try {
-      const jobsData = await fetchJobs(pr.prPath, token);
-      const reviewStatus = getReviewStatus(jobsData);
-
-      if (values.json) {
-        console.log(JSON.stringify({ bugs: [], status: reviewStatus }, null, 2));
-      } else {
-        console.log(formatStatus(reviewStatus, pr));
-      }
-      return;
-    } catch {
-      // Jobs endpoint failed — fall through to normal output
-    }
-  }
-
   // Output
   if (values.json) {
-    console.log(formatJSON(flags));
+    console.log(formatJSON(flags, reviewStatus));
   } else {
-    console.log(formatTerminal(flags, pr));
+    console.log(formatTerminal(flags, pr, reviewStatus));
   }
 }
 

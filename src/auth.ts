@@ -10,6 +10,36 @@ import {
 import type { CachedToken } from "./types.js";
 
 // ---------------------------------------------------------------------------
+// Auth errors
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when authentication is required but we're in a non-interactive
+ * context (CI, piped stdin, DEVIN_BUGS_NONINTERACTIVE). The CLI should
+ * catch this and exit with code 10.
+ */
+export class AuthRequiredError extends Error {
+  constructor() {
+    super(
+      "Authentication required\n" +
+      "  devin-bugs needs you to log in via your browser.\n" +
+      "  Run: devin-bugs --login\n" +
+      "  Or set DEVIN_TOKEN environment variable for non-interactive use."
+    );
+    this.name = "AuthRequiredError";
+  }
+}
+
+/** Detect non-interactive context where browser login can't work. */
+function isNonInteractive(): boolean {
+  return (
+    !!process.env.CI ||
+    !!process.env.DEVIN_BUGS_NONINTERACTIVE ||
+    !process.stdin.isTTY
+  );
+}
+
+// ---------------------------------------------------------------------------
 // JWT helpers (no library — just decode the payload for `exp`)
 // ---------------------------------------------------------------------------
 
@@ -37,9 +67,15 @@ function ensureDir(dirPath: string): void {
 }
 
 function readCachedToken(): CachedToken | null {
+  if (!existsSync(TOKEN_PATH)) return null;
+  let raw: string;
   try {
-    if (!existsSync(TOKEN_PATH)) return null;
-    const raw = readFileSync(TOKEN_PATH, "utf-8");
+    raw = readFileSync(TOKEN_PATH, "utf-8");
+  } catch (err) {
+    console.error(`\x1b[33m▸ Could not read token cache: ${err instanceof Error ? err.message : err}\x1b[0m`);
+    return null;
+  }
+  try {
     const parsed = JSON.parse(raw) as CachedToken;
     if (!parsed.accessToken || !parsed.expiresAt) return null;
     return parsed;
@@ -210,8 +246,9 @@ function openBrowser(url: string): void {
 
   execFile(opener.cmd, opener.args, (err) => {
     if (err) {
-      console.error(`\x1b[33m▸ Could not open browser automatically.\x1b[0m`);
-      console.error(`  Open this URL manually: ${url}\n`);
+      console.error(`\x1b[31m✗ Could not open browser automatically.\x1b[0m`);
+      console.error(`\x1b[1m  Open this URL in your browser:\x1b[0m`);
+      console.error(`  \x1b[36m${url}\x1b[0m\n`);
     }
   });
 }
@@ -359,6 +396,7 @@ function startCallbackServer(): Promise<{
 }> {
   return new Promise((resolve, reject) => {
     let receivedToken: string | null = null;
+    let waitingInterval: ReturnType<typeof setInterval> | null = null;
 
     const server = createServer((req, res) => {
       // CORS headers for cross-origin fetch from app.devin.ai
@@ -398,6 +436,7 @@ function startCallbackServer(): Promise<{
               res.writeHead(200, { "Content-Type": "application/json" });
               res.end(JSON.stringify({ ok: true }));
               setTimeout(() => {
+                if (waitingInterval) clearInterval(waitingInterval);
                 server.close();
                 resolve({ token: receivedToken!, auth0Cache, server });
               }, 500);
@@ -426,13 +465,24 @@ function startCallbackServer(): Promise<{
       const addr = server.address() as { port: number };
       const port = addr.port;
 
-      console.error(`\x1b[33m▸ Opening browser for Devin login...\x1b[0m`);
-      console.error(`  Local server: http://localhost:${port}\n`);
+      const loginUrl = `http://localhost:${port}`;
 
-      openBrowser(`http://localhost:${port}`);
+      console.error(`\n\x1b[33m⚠ Authentication required\x1b[0m`);
+      console.error(`  Opening browser for Devin login...`);
+      console.error(`  If the browser doesn't open, visit: \x1b[36m${loginUrl}\x1b[0m\n`);
+
+      openBrowser(loginUrl);
+
+      // Periodic "still waiting" messages
+      waitingInterval = setInterval(() => {
+        if (!receivedToken) {
+          console.error(`\x1b[33m  Still waiting for login...\x1b[0m`);
+        }
+      }, 30_000);
 
       // Timeout after 5 minutes
       setTimeout(() => {
+        if (waitingInterval) clearInterval(waitingInterval);
         if (!receivedToken) {
           server.close();
           reject(new Error("Login timed out after 5 minutes."));
@@ -440,7 +490,10 @@ function startCallbackServer(): Promise<{
       }, 5 * 60 * 1000);
     });
 
-    server.on("error", reject);
+    server.on("error", (err) => {
+      if (waitingInterval) clearInterval(waitingInterval);
+      reject(err);
+    });
   });
 }
 
@@ -483,7 +536,11 @@ export async function getToken(opts?: GetTokenOptions): Promise<string> {
     }
   }
 
-  // 4. Interactive login via browser
+  // 4. Interactive login via browser (only if interactive)
+  if (isNonInteractive()) {
+    throw new AuthRequiredError();
+  }
+
   const { token, auth0Cache } = await startCallbackServer();
   console.error("\x1b[32m✓ Authentication successful!\x1b[0m\n");
   writeCachedToken(token, auth0Cache);
@@ -493,6 +550,11 @@ export async function getToken(opts?: GetTokenOptions): Promise<string> {
 /** Force re-authentication by clearing cache and launching browser */
 export async function forceReauth(): Promise<string> {
   clearCachedToken();
+
+  if (isNonInteractive()) {
+    throw new AuthRequiredError();
+  }
+
   const { token, auth0Cache } = await startCallbackServer();
   console.error("\x1b[32m✓ Authentication successful!\x1b[0m\n");
   writeCachedToken(token, auth0Cache);

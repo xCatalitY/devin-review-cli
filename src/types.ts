@@ -106,3 +106,13 @@ export interface LifeguardFlag {
   /** URL to the comment on GitHub */
   htmlUrl: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Review status (from jobs endpoint)
+// ---------------------------------------------------------------------------
+
+export interface ReviewStatus {
+  status: "no_review" | "running" | "completed" | "failed";
+  message: string;
+  stages?: { completed: string[]; total: string[] };
+}

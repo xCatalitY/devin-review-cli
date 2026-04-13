@@ -10,6 +10,36 @@ import {
 import type { CachedToken } from "./types.js";
 
 // ---------------------------------------------------------------------------
+// Auth errors
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when authentication is required but we're in a non-interactive
+ * context (CI, piped stdin, DEVIN_BUGS_NONINTERACTIVE). The CLI should
+ * catch this and exit with code 10.
+ */
+export class AuthRequiredError extends Error {
+  constructor() {
+    super(
+      "Authentication required\n" +
+      "  devin-bugs needs you to log in via your browser.\n" +
+      "  Run: devin-bugs --login\n" +
+      "  Or set DEVIN_TOKEN environment variable for non-interactive use."
+    );
+    this.name = "AuthRequiredError";
+  }
+}
+
+/** Detect non-interactive context where browser login can't work. */
+function isNonInteractive(): boolean {
+  return (
+    !!process.env.CI ||
+    !!process.env.DEVIN_BUGS_NONINTERACTIVE ||
+    !process.stdin.isTTY
+  );
+}
+
+// ---------------------------------------------------------------------------
 // JWT helpers (no library — just decode the payload for `exp`)
 // ---------------------------------------------------------------------------
 
@@ -483,7 +513,11 @@ export async function getToken(opts?: GetTokenOptions): Promise<string> {
     }
   }
 
-  // 4. Interactive login via browser
+  // 4. Interactive login via browser (only if interactive)
+  if (isNonInteractive()) {
+    throw new AuthRequiredError();
+  }
+
   const { token, auth0Cache } = await startCallbackServer();
   console.error("\x1b[32m✓ Authentication successful!\x1b[0m\n");
   writeCachedToken(token, auth0Cache);
@@ -493,6 +527,11 @@ export async function getToken(opts?: GetTokenOptions): Promise<string> {
 /** Force re-authentication by clearing cache and launching browser */
 export async function forceReauth(): Promise<string> {
   clearCachedToken();
+
+  if (isNonInteractive()) {
+    throw new AuthRequiredError();
+  }
+
   const { token, auth0Cache } = await startCallbackServer();
   console.error("\x1b[32m✓ Authentication successful!\x1b[0m\n");
   writeCachedToken(token, auth0Cache);

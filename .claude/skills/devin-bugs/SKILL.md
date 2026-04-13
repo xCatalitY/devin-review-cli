@@ -100,6 +100,7 @@ After parsing the JSON, check `status`:
 |------|---------|
 | `--json` | JSON output (always use this in the skill) |
 | `--all` | Include analysis suggestions, not just bugs |
+| `--watch` | Poll until review completes, show stage progress |
 | `--raw` | Dump full API response (debug) |
 | `--no-cache` | Force re-authentication |
 | `--login` | Just authenticate, don't fetch anything |

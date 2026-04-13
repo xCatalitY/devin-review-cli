@@ -6,6 +6,7 @@ import { getToken, forceReauth, AuthRequiredError } from "./auth.js";
 import { fetchDigest, fetchJobs, getReviewStatus, AuthExpiredError, ApiError } from "./api.js";
 import { extractFlags } from "./filter.js";
 import { formatTerminal, formatJSON } from "./format.js";
+import { watchReview, WatchTimeoutError } from "./watch.js";
 import type { ReviewStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -28,6 +29,7 @@ const HELP = `
   \x1b[1mOptions:\x1b[0m
     --json          Output as JSON (for piping)
     --all           Include analysis/suggestions, not just bugs
+    --watch         Poll until Devin review completes, show progress
     --raw           Dump raw API response (debug)
     --no-cache      Force re-authentication
     --login         Just authenticate, don't fetch anything
@@ -50,7 +52,7 @@ function printHelp(): void {
 }
 
 function printVersion(): void {
-  console.log("devin-bugs 0.5.1");
+  console.log("devin-bugs 0.6.0");
 }
 
 // ---------------------------------------------------------------------------
@@ -65,6 +67,7 @@ async function main(): Promise<void> {
       options: {
         json: { type: "boolean", default: false },
         all: { type: "boolean", default: false },
+        watch: { type: "boolean", default: false },
         raw: { type: "boolean", default: false },
         "no-cache": { type: "boolean", default: false },
         login: { type: "boolean", default: false },
@@ -156,6 +159,28 @@ async function main(): Promise<void> {
     }
     console.error(`\x1b[31mAuth error:\x1b[0m ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
+  }
+
+  // --watch: poll until review completes
+  if (values.watch) {
+    try {
+      const watchStatus = await watchReview(pr.prPath, token, pr);
+      if (watchStatus.status === "no_review") {
+        console.error(`\x1b[33m○ No Devin review triggered for ${pr.owner}/${pr.repo}#${pr.number}\x1b[0m`);
+        process.exit(0);
+      }
+      if (watchStatus.status === "failed") {
+        console.error(`\x1b[31m✗ Devin review failed for ${pr.owner}/${pr.repo}#${pr.number}\x1b[0m`);
+        process.exit(0);
+      }
+      // completed — fall through to fetch digest and show bugs
+    } catch (err) {
+      if (err instanceof WatchTimeoutError) {
+        console.error(`\x1b[31m✗ ${err.message}\x1b[0m`);
+        process.exit(1);
+      }
+      throw err;
+    }
   }
 
   // Fetch digest (with one retry on auth failure)

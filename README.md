@@ -41,6 +41,7 @@ devin-bugs https://app.devin.ai/review/owner/repo/pull/123
 ```
 --json          Output as JSON (for piping)
 --all           Include analysis/suggestions, not just bugs
+--watch         Poll until Devin review completes, show progress
 --raw           Dump raw API response (debug)
 --no-cache      Force re-authentication
 --login         Just authenticate, don't fetch anything

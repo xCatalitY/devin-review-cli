@@ -128,13 +128,9 @@ function wrapText(text: string, indent: number, maxWidth: number): string {
 export function formatTerminal(flags: LifeguardFlag[], pr: ParsedPR, status?: ReviewStatus): string {
   const lines: string[] = [];
 
-  // Status banner (always shown when status available)
-  if (status) {
-    // For completed reviews with bugs, skip the banner (the bug count header is enough)
-    // For all other states, show the banner
-    if (status.status !== "completed" || flags.length === 0) {
-      lines.push(formatStatusBanner(status, pr));
-    }
+  // Status banner (shown for non-completed states only)
+  if (status && status.status !== "completed") {
+    lines.push(formatStatusBanner(status, pr));
   }
 
   // Header

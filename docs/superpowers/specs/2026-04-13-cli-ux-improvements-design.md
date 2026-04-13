@@ -99,7 +99,7 @@ New JSON output (object with status):
 ```json
 {
   "status": {
-    "state": "running" | "completed" | "no_review" | "failed",
+    "status": "running" | "completed" | "no_review" | "failed",
     "message": "Bug detection (2/4 stages)",
     "stages": {
       "completed": ["lifeguard"],
@@ -134,7 +134,7 @@ Add a section teaching the skill to detect and react to auth-needed:
 
 #### Review-in-progress handling
 
-- When JSON `status.state === "running"`: Report to the user that Devin is still reviewing, show the stage progress, and note that any bugs listed are from a previous review.
+- When JSON `status.status === "running"`: Report to the user that Devin is still reviewing, show the stage progress, and note that any bugs listed are from a previous review.
 - Suggest re-running later for fresh results.
 
 #### Updated JSON schema

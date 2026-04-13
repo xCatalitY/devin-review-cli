@@ -15,7 +15,13 @@ $ devin-bugs owner/repo#46
 
 ## Install
 
-Requires [Bun](https://bun.sh) (v1.0+).
+```bash
+npm install -g devin-bugs
+```
+
+Requires Node.js 18+. No other dependencies.
+
+### Development
 
 ```bash
 git clone https://github.com/xCatalitY/devin-review-cli.git
@@ -138,12 +144,38 @@ src/
   cli.ts          Entry point, arg parsing, orchestration
   auth.ts         Browser-based auth + token caching
   api.ts          Devin API client with retry on 401
+  watch.ts        --watch poll loop with stage progress
   filter.ts       Bug extraction from digest response
   format.ts       Terminal (ANSI) and JSON formatters
   parse-pr.ts     PR URL/shorthand parser
   types.ts        TypeScript interfaces
   config.ts       Paths and constants
 ```
+
+## Agent setup
+
+To set up `devin-bugs` as a tool for Claude Code (or similar AI coding agents):
+
+**1. Install the CLI globally:**
+
+```bash
+npm install -g devin-bugs
+```
+
+**2. Install the Claude Code skill:**
+
+```bash
+mkdir -p ~/.claude/skills/devin-bugs
+curl -fsSL https://raw.githubusercontent.com/xCatalitY/devin-review-cli/main/.claude/skills/devin-bugs/SKILL.md \
+  -o ~/.claude/skills/devin-bugs/SKILL.md
+```
+
+After installation, the `/devin-bugs` slash command is available in Claude Code. The skill teaches the agent to:
+- Set `DEVIN_BUGS_NONINTERACTIVE=1` on every invocation (prevents browser hang)
+- Handle exit code 10 (auth required) by prompting the user to run `! devin-bugs --login`
+- Parse the `{ status, bugs }` JSON envelope
+- Interpret review status (running, completed, no_review, failed)
+- Cross-reference bugs with local code files
 
 ## Disclaimer
 

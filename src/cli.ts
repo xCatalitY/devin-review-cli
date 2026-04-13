@@ -50,7 +50,7 @@ function printHelp(): void {
 }
 
 function printVersion(): void {
-  console.log("devin-bugs 0.5.0");
+  console.log("devin-bugs 0.5.1");
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import type { LifeguardFlag, ParsedPR } from "./types.js";
+import type { LifeguardFlag, ParsedPR, ReviewStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // ANSI color helpers (no dependency)
@@ -51,6 +51,48 @@ function typeBadge(type: LifeguardFlag["type"]): string {
 }
 
 // ---------------------------------------------------------------------------
+// Status banner (shown at top of terminal output)
+// ---------------------------------------------------------------------------
+
+function formatStatusBanner(status: ReviewStatus, pr: ParsedPR): string {
+  const prRef = `${c.dim}${pr.owner}/${pr.repo}#${pr.number}${c.reset}`;
+
+  switch (status.status) {
+    case "completed":
+      return `\n  ${c.green}✓ Devin review complete${c.reset} for ${prRef}\n`;
+
+    case "running": {
+      const stageLabels: Record<string, string> = {
+        lifeguard: "Bug detection",
+        groups: "File grouping",
+        copy_detection: "Copy detection",
+        display_info: "Finalizing",
+      };
+      const stages = status.stages;
+      const lines: string[] = [];
+      lines.push(`\n  ${c.yellow}${c.bold}⟳ Devin review in progress${c.reset} for ${prRef}`);
+
+      if (stages) {
+        const done = stages.completed.length;
+        const total = stages.total.length;
+        const currentStage = stages.total.find((s) => !stages.completed.includes(s));
+        const currentLabel = currentStage ? stageLabels[currentStage] ?? currentStage : "Processing";
+        lines.push(`  ${c.yellow}${currentLabel} (${done}/${total} stages)${c.reset}`);
+      }
+
+      lines.push(`  ${c.dim}Results below may be from a previous review.${c.reset}\n`);
+      return lines.join("\n");
+    }
+
+    case "no_review":
+      return `\n  ${c.yellow}○ No Devin review triggered${c.reset} for ${prRef}\n`;
+
+    case "failed":
+      return `\n  ${c.red}✗ Devin review failed${c.reset} for ${prRef}\n`;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Terminal formatter
 // ---------------------------------------------------------------------------
 
@@ -83,8 +125,17 @@ function wrapText(text: string, indent: number, maxWidth: number): string {
   return lines.join("\n");
 }
 
-export function formatTerminal(flags: LifeguardFlag[], pr: ParsedPR): string {
+export function formatTerminal(flags: LifeguardFlag[], pr: ParsedPR, status?: ReviewStatus): string {
   const lines: string[] = [];
+
+  // Status banner (always shown when status available)
+  if (status) {
+    // For completed reviews with bugs, skip the banner (the bug count header is enough)
+    // For all other states, show the banner
+    if (status.status !== "completed" || flags.length === 0) {
+      lines.push(formatStatusBanner(status, pr));
+    }
+  }
 
   // Header
   const bugCount = flags.filter((f) => f.type === "lifeguard-bug").length;
@@ -154,69 +205,12 @@ export function formatTerminal(flags: LifeguardFlag[], pr: ParsedPR): string {
 }
 
 // ---------------------------------------------------------------------------
-// Status formatter (when no bugs found)
-// ---------------------------------------------------------------------------
-
-export function formatStatus(
-  status: {
-    status: "no_review" | "running" | "completed" | "failed";
-    message: string;
-    stages?: { completed: string[]; total: string[] };
-  },
-  pr: ParsedPR
-): string {
-  const lines: string[] = [];
-  const prRef = `${c.dim}${pr.owner}/${pr.repo}#${pr.number}${c.reset}`;
-
-  const stageLabels: Record<string, string> = {
-    lifeguard: "Bug detection",
-    groups: "File grouping",
-    copy_detection: "Copy detection",
-    display_info: "Finalizing",
-  };
-
-  switch (status.status) {
-    case "no_review":
-      lines.push(`\n  ${c.yellow}No Devin review${c.reset} for ${prRef}`);
-      lines.push(`  ${c.dim}Devin hasn't been triggered on this PR yet.${c.reset}\n`);
-      break;
-
-    case "running": {
-      const stages = status.stages;
-      lines.push(`\n  ${c.yellow}${c.bold}Devin review in progress${c.reset} for ${prRef}\n`);
-
-      if (stages) {
-        for (const stage of stages.total) {
-          const done = stages.completed.includes(stage);
-          const label = stageLabels[stage] ?? stage;
-          const icon = done ? `${c.green}✓${c.reset}` : `${c.yellow}○${c.reset}`;
-          lines.push(`  ${icon} ${done ? c.dim : c.white}${label}${c.reset}`);
-        }
-        lines.push("");
-      }
-
-      lines.push(`  ${c.dim}Bugs will appear once the review completes.${c.reset}\n`);
-      break;
-    }
-
-    case "completed":
-      lines.push(`\n  ${c.green}${c.bold}No unresolved bugs${c.reset} in ${prRef}`);
-      lines.push(`  ${c.dim}Devin review complete — all clear.${c.reset}\n`);
-      break;
-
-    case "failed":
-      lines.push(`\n  ${c.red}Devin review failed${c.reset} for ${prRef}`);
-      lines.push(`  ${c.dim}The review job encountered an error.${c.reset}\n`);
-      break;
-  }
-
-  return lines.join("\n");
-}
-
-// ---------------------------------------------------------------------------
 // JSON formatter
 // ---------------------------------------------------------------------------
 
-export function formatJSON(flags: LifeguardFlag[]): string {
-  return JSON.stringify(flags, null, 2);
+export function formatJSON(flags: LifeguardFlag[], status?: ReviewStatus): string {
+  return JSON.stringify({
+    status: status ?? { status: "completed", message: "Devin review complete." },
+    bugs: flags,
+  }, null, 2);
 }

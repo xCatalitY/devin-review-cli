@@ -67,9 +67,15 @@ function ensureDir(dirPath: string): void {
 }
 
 function readCachedToken(): CachedToken | null {
+  if (!existsSync(TOKEN_PATH)) return null;
+  let raw: string;
   try {
-    if (!existsSync(TOKEN_PATH)) return null;
-    const raw = readFileSync(TOKEN_PATH, "utf-8");
+    raw = readFileSync(TOKEN_PATH, "utf-8");
+  } catch (err) {
+    console.error(`\x1b[33m▸ Could not read token cache: ${err instanceof Error ? err.message : err}\x1b[0m`);
+    return null;
+  }
+  try {
     const parsed = JSON.parse(raw) as CachedToken;
     if (!parsed.accessToken || !parsed.expiresAt) return null;
     return parsed;

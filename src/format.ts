@@ -58,9 +58,6 @@ function formatStatusBanner(status: ReviewStatus, pr: ParsedPR): string {
   const prRef = `${c.dim}${pr.owner}/${pr.repo}#${pr.number}${c.reset}`;
 
   switch (status.status) {
-    case "completed":
-      return `\n  ${c.green}✓ Devin review complete${c.reset} for ${prRef}\n`;
-
     case "running": {
       const stageLabels: Record<string, string> = {
         lifeguard: "Bug detection",
@@ -89,6 +86,9 @@ function formatStatusBanner(status: ReviewStatus, pr: ParsedPR): string {
 
     case "failed":
       return `\n  ${c.red}✗ Devin review failed${c.reset} for ${prRef}\n`;
+
+    default:
+      return "";
   }
 }
 

@@ -103,7 +103,10 @@ async function main(): Promise<void> {
       token = await getToken({ noCache: values["no-cache"] });
     } catch (err: any) {
       if (err instanceof AuthRequiredError) {
-        console.error(`\x1b[33m⚠ ${err.message}\x1b[0m`);
+        console.error(`\x1b[33m⚠ Authentication required\x1b[0m`);
+        console.error(`  devin-bugs needs you to log in via your browser.`);
+        console.error(`  Run: \x1b[1mdevin-bugs --login\x1b[0m`);
+        console.error(`  Or set DEVIN_TOKEN environment variable for non-interactive use.`);
         process.exit(10);
       }
       throw err;
@@ -117,8 +120,8 @@ async function main(): Promise<void> {
       );
       const exp = new Date(payload.exp * 1000);
       console.error(`  Expires: ${exp.toLocaleString()}`);
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error(`\x1b[33m▸ Could not decode token expiry: ${err instanceof Error ? err.message : err}\x1b[0m`);
     }
     return;
   }
@@ -145,10 +148,13 @@ async function main(): Promise<void> {
     token = await getToken({ noCache: values["no-cache"] });
   } catch (err: any) {
     if (err instanceof AuthRequiredError) {
-      console.error(`\x1b[33m⚠ ${err.message}\x1b[0m`);
+      console.error(`\x1b[33m⚠ Authentication required\x1b[0m`);
+      console.error(`  devin-bugs needs you to log in via your browser.`);
+      console.error(`  Run: \x1b[1mdevin-bugs --login\x1b[0m`);
+      console.error(`  Or set DEVIN_TOKEN environment variable for non-interactive use.`);
       process.exit(10);
     }
-    console.error(`\x1b[31mAuth error:\x1b[0m ${err.message}`);
+    console.error(`\x1b[31mAuth error:\x1b[0m ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
 
@@ -165,10 +171,13 @@ async function main(): Promise<void> {
         digest = await fetchDigest(pr.prPath, token);
       } catch (retryErr: any) {
         if (retryErr instanceof AuthRequiredError) {
-          console.error(`\x1b[33m⚠ ${retryErr.message}\x1b[0m`);
+          console.error(`\x1b[33m⚠ Authentication required\x1b[0m`);
+          console.error(`  devin-bugs needs you to log in via your browser.`);
+          console.error(`  Run: \x1b[1mdevin-bugs --login\x1b[0m`);
+          console.error(`  Or set DEVIN_TOKEN environment variable for non-interactive use.`);
           process.exit(10);
         }
-        console.error(`\x1b[31mError:\x1b[0m ${retryErr.message}`);
+        console.error(`\x1b[31mError:\x1b[0m ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`);
         process.exit(1);
       }
     } else if (err instanceof ApiError) {

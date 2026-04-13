@@ -1,5 +1,5 @@
 import { DEVIN_API_BASE } from "./config.js";
-import type { DigestResponse } from "./types.js";
+import type { DigestResponse, ReviewStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Error classes
@@ -112,11 +112,7 @@ export async function fetchJobs(
  * Get the review status for display purposes.
  * Returns a human-readable status based on the latest job.
  */
-export function getReviewStatus(jobs: JobsResponse): {
-  status: "no_review" | "running" | "completed" | "failed";
-  message: string;
-  stages?: { completed: string[]; total: string[] };
-} {
+export function getReviewStatus(jobs: JobsResponse): ReviewStatus {
   if (jobs.jobs.length === 0) {
     return { status: "no_review", message: "No Devin review has been triggered for this PR." };
   }

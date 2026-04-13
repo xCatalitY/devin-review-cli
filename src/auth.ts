@@ -484,7 +484,10 @@ function startCallbackServer(): Promise<{
       }, 5 * 60 * 1000);
     });
 
-    server.on("error", reject);
+    server.on("error", (err) => {
+      if (waitingInterval) clearInterval(waitingInterval);
+      reject(err);
+    });
   });
 }
 

@@ -196,8 +196,9 @@ async function main(): Promise<void> {
   try {
     const jobsData = await fetchJobs(pr.prPath, token);
     reviewStatus = getReviewStatus(jobsData);
-  } catch {
-    // Jobs endpoint failed — continue without status
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`\x1b[33m▸ Could not fetch review status: ${msg}\x1b[0m`);
   }
 
   // Extract and filter flags

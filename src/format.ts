@@ -206,7 +206,7 @@ export function formatTerminal(flags: LifeguardFlag[], pr: ParsedPR, status?: Re
 
 export function formatJSON(flags: LifeguardFlag[], status?: ReviewStatus): string {
   return JSON.stringify({
-    status: status ?? { status: "completed", message: "Devin review complete." },
+    status: status ?? null,
     bugs: flags,
   }, null, 2);
 }

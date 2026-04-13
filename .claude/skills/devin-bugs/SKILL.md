@@ -83,15 +83,16 @@ The `--json` flag outputs:
 
 ## Interpreting review status
 
-After parsing the JSON, check `status.status`:
+After parsing the JSON, check `status`:
 
-- **`completed`**: Review is done. Report bugs normally.
-- **`running`**: Devin is still reviewing (or re-reviewing after a PR update). Tell the user:
+- **`null`**: Review status could not be retrieved (jobs endpoint failed). Report bugs normally without status context.
+- **`status.status === "completed"`**: Review is done. Report bugs normally.
+- **`status.status === "running"`**: Devin is still reviewing (or re-reviewing after a PR update). Tell the user:
   - "Devin is still reviewing this PR ({stages.completed.length}/{stages.total.length} stages complete)."
   - If bugs are present: "These bugs are from a previous review and may change once the current review finishes."
   - Suggest re-running later for fresh results.
-- **`no_review`**: Devin hasn't been triggered on this PR. Tell the user.
-- **`failed`**: The review job failed. Tell the user.
+- **`status.status === "no_review"`**: Devin hasn't been triggered on this PR. Tell the user.
+- **`status.status === "failed"`**: The review job failed. Tell the user.
 
 ## Flags
 

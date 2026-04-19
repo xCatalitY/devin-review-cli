@@ -1,16 +1,24 @@
 # devin-review-cli
 
-CLI to extract unresolved bugs from [Devin AI](https://devin.ai) code reviews. Pulls flagged bugs from any PR that Devin has reviewed and outputs them in your terminal or as JSON.
+CLI to extract unresolved bugs and flags from [Devin AI](https://devin.ai) code reviews. Pulls the full set of Lifeguard findings — bugs, flagged analyses, and the orange "Investigate" items — from any PR that Devin has reviewed and outputs them in your terminal or as JSON.
 
 ```
 $ devin-bugs owner/repo#46
 
-  1 bug in owner/repo#46
+  1 bug, 2 to investigate, 5 flags in owner/repo#46
 
-  BUG  lib/apply/assist.ts:124-136   WARNING
+  BUG          lib/apply/assist.ts:124-136
   Reverting packet to 'ready' after credits charged creates an unrecoverable retry loop
   In prepareApplyAssist, when createApplication fails with a non-P2002 error,
   the packet is reverted to 'ready' but credits have already been charged...
+
+  INVESTIGATE  components/pricing.tsx:112
+  Color token swap deviates from naming convention but improves WCAG contrast
+  ...
+
+  FLAG         lib/search/query.ts:286-296
+  Skills filter parameter numbering alignment verified correct
+  ...
 ```
 
 ## Install
@@ -45,26 +53,30 @@ devin-bugs https://app.devin.ai/review/owner/repo/pull/123
 ### Options
 
 ```
---json          Output as JSON (for piping)
---all           Include analysis/suggestions, not just bugs
---watch         Poll until Devin review completes, show progress
---raw           Dump raw API response (debug)
---no-cache      Force re-authentication
---login         Just authenticate, don't fetch anything
---logout        Clear stored credentials
---help, -h      Show help
+--json              Output as JSON (for piping)
+--bugs-only         Only surface bugs (hide flags / analyses)
+--flags-only        Only surface flags / analyses (hide bugs)
+--include-resolved  Include bugs Devin self-resolved in a later commit
+--watch             Poll until Devin review completes, show progress
+--raw               Dump raw job-result API response (debug)
+--no-cache          Force re-authentication
+--login             Just authenticate, don't fetch anything
+--logout            Clear stored credentials
+--help, -h          Show help
 ```
+
+Default output is **unresolved bugs + all flags** — matches what you see in Devin's web UI on a live review.
 
 ### Examples
 
 ```bash
-# Get bugs as JSON for scripting
+# Get findings as JSON for scripting
 devin-bugs owner/repo#46 --json | jq '.bugs[].title'
 
-# Include all flags (bugs + analysis suggestions)
-devin-bugs owner/repo#46 --all
+# Only the items Devin marked as needing investigation
+devin-bugs owner/repo#46 --json | jq '.analyses[] | select(.needsInvestigation)'
 
-# Pipe to another tool
+# Filter to severe bugs only
 devin-bugs owner/repo#46 --json | jq '.bugs[] | select(.severity == "severe")'
 
 # Skip browser, use token directly
@@ -96,18 +108,17 @@ For CI or headless environments, set `DEVIN_TOKEN` as an environment variable.
 The CLI reverse-engineers Devin's internal PR review API:
 
 1. Authenticates via Devin's Auth0-based auth system
-2. Fetches the review digest from `GET /api/pr-review/digest`
-3. Parses review threads for Devin's "lifeguard" bug flags
-4. Filters to unresolved, non-outdated items
-5. Outputs formatted results
+2. Fetches `GET /api/pr-review/jobs` to find the latest completed review job + version
+3. Fetches `GET /api/pr-review/job-result/{jobId}/{versionId}` for the full Lifeguard output
+4. Splits `lifeguard_result.bugs[]` (the red "Bug" badges) from `lifeguard_result.analyses[]` (the blue "Flag" / orange "Investigate" badges)
+5. Filters out bugs Devin self-resolved (unless `--include-resolved`) and outputs the rest
 
 ### API endpoints used
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET pr-review/digest?pr_path=...` | Full review data with flags, threads, checks |
-| `GET pr-review/info?pr_path=...` | PR metadata |
-| `GET pr-review/jobs?pr_path=...` | Review job status |
+| `GET pr-review/jobs?pr_path=...` | Review job + version index |
+| `GET pr-review/job-result/{jobId}/{versionId}?pr_path=...` | Full Lifeguard output: bugs + analyses |
 
 ## JSON output schema
 
@@ -118,22 +129,25 @@ interface Output {
     message: string;
     stages?: { completed: string[]; total: string[] };
   };
-  bugs: Bug[];
+  bugs: Finding[];        // Lifeguard bugs (red "Bug" badge in the UI)
+  analyses: Finding[];    // Lifeguard analyses (blue "Flag" / orange "Investigate")
 }
 
-interface Bug {
-  filePath: string;       // "lib/apply/assist.ts"
-  startLine: number;      // 124
-  endLine: number;        // 136
+interface Finding {
+  id: string;
+  filePath: string;
+  startLine: number | null;
+  endLine: number | null;
   side: "LEFT" | "RIGHT";
-  title: string;          // Short description
-  description: string;    // Full explanation
-  severity: string;       // "severe" | "warning" | "info"
-  recommendation: string; // Suggested fix
+  title: string;
+  description: string;
+  /** Bugs: "severe" | "non-severe". Analyses: "investigate" | "info". */
+  severity: string;
+  recommendation: string;       // Suggested fix (bugs only)
+  needsInvestigation: boolean;  // true iff analysis has the orange "Investigate" badge
   type: "lifeguard-bug" | "lifeguard-analysis";
-  isResolved: boolean;
-  isOutdated: boolean;
-  htmlUrl: string | null;  // Link to GitHub comment
+  isResolved: boolean;          // true iff Devin self-resolved this bug in a later commit
+  htmlUrl: string | null;
 }
 ```
 
@@ -173,9 +187,9 @@ curl -fsSL https://raw.githubusercontent.com/xCatalitY/devin-review-cli/main/.cl
 After installation, the `/devin-bugs` slash command is available in Claude Code. The skill teaches the agent to:
 - Set `DEVIN_BUGS_NONINTERACTIVE=1` on every invocation (prevents browser hang)
 - Handle exit code 10 (auth required) by prompting the user to run `! devin-bugs --login`
-- Parse the `{ status, bugs }` JSON envelope
+- Parse the `{ status, bugs, analyses }` JSON envelope
 - Interpret review status (running, completed, no_review, failed)
-- Cross-reference bugs with local code files
+- Cross-reference findings with local code files
 
 ## Disclaimer
 

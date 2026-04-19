@@ -1,13 +1,19 @@
 ---
 name: devin-bugs
-description: Extract unresolved bugs from a Devin AI code review for a GitHub PR. Use when the user mentions a PR number, wants to check Devin review status, asks about bugs flagged by Devin, or wants to see what Devin found in a code review. Also use when the user says "check devin", "devin review", "PR bugs", or references app.devin.ai.
+description: Extract unresolved bugs and flags from a Devin AI code review for a GitHub PR. Use when the user mentions a PR number, wants to check Devin review status, asks about bugs or flags from Devin, or wants to see what Devin found in a code review. Also use when the user says "check devin", "devin review", "PR bugs", "PR flags", or references app.devin.ai.
 argument-hint: "<owner/repo#number>"
 allowed-tools: Bash Read Grep
 ---
 
-# Extract Devin Review Bugs
+# Extract Devin Review Findings
 
-Fetch and analyze unresolved bugs from Devin AI's code review for a GitHub pull request.
+Fetch and analyze findings (bugs and flags) from Devin AI's code review for a GitHub pull request.
+
+Devin emits two kinds of findings:
+- **Bugs** — things Devin is confident are wrong. Rendered with a red/yellow `BUG` badge. Devin sometimes marks these as resolved after a later commit fixes them (`isResolved: true`).
+- **Analyses (aka "Flags")** — lower-confidence observations. Rendered as `FLAG`, or `INVESTIGATE` if `needsInvestigation: true` (the orange badge in Devin's UI — "worth a human look").
+
+Default output includes unresolved bugs + all analyses. Resolved bugs are hidden unless `--include-resolved` is passed.
 
 ## Prerequisites
 
@@ -48,7 +54,7 @@ The tool accepts any of these:
 
 **Important:** When exit code is 10, do NOT silently retry or ignore the error. The user must complete browser-based login interactively.
 
-## JSON output schema (v0.5.0+)
+## JSON output schema (v0.7.0+)
 
 The `--json` flag outputs:
 
@@ -64,22 +70,42 @@ The `--json` flag outputs:
   },
   "bugs": [
     {
+      "id": "BUG_...",
       "filePath": "src/example.ts",
       "startLine": 42,
       "endLine": 50,
       "side": "RIGHT",
       "title": "Short description",
       "description": "Full explanation",
-      "severity": "severe | warning | info",
-      "recommendation": "Suggested fix",
-      "type": "lifeguard-bug | lifeguard-analysis",
+      "severity": "severe | non-severe",
+      "recommendation": "Suggested fix text",
+      "needsInvestigation": false,
+      "type": "lifeguard-bug",
       "isResolved": false,
-      "isOutdated": false,
-      "htmlUrl": "https://github.com/..."
+      "htmlUrl": null
+    }
+  ],
+  "analyses": [
+    {
+      "id": "ANALYSIS_...",
+      "filePath": "src/example.ts",
+      "startLine": 60,
+      "endLine": 72,
+      "side": "RIGHT",
+      "title": "Short description",
+      "description": "Full analysis body",
+      "severity": "investigate | info",
+      "recommendation": "",
+      "needsInvestigation": true,
+      "type": "lifeguard-analysis",
+      "isResolved": false,
+      "htmlUrl": null
     }
   ]
 }
 ```
+
+**Schema change from v0.5/0.6 → v0.7**: the top-level `bugs` field now contains only Lifeguard bugs; Lifeguard analyses moved to a new `analyses` array. `isOutdated` was removed (no longer applicable once the tool switched from digest threads to job-result).
 
 ## Interpreting review status
 
@@ -99,18 +125,20 @@ After parsing the JSON, check `status`:
 | Flag | Purpose |
 |------|---------|
 | `--json` | JSON output (always use this in the skill) |
-| `--all` | Include analysis suggestions, not just bugs |
+| `--bugs-only` | Hide analyses; surface only Lifeguard bugs |
+| `--flags-only` | Hide bugs; surface only analyses (Flags / Investigate items) |
+| `--include-resolved` | Include bugs Devin self-resolved in a later commit |
 | `--watch` | Poll until review completes, show stage progress |
-| `--raw` | Dump full API response (debug) |
+| `--raw` | Dump the full job-result API response (debug) |
 | `--no-cache` | Force re-authentication |
 | `--login` | Just authenticate, don't fetch anything |
 | `--logout` | Clear stored credentials |
 
 ## After fetching
 
-Once you have the bugs:
-- Summarize them for the user with file locations and severity
+Once you have the findings:
+- Summarize them for the user grouped as: bugs, items to investigate (`needsInvestigation: true`), and other flags
 - Cross-reference with local code files using Read/Grep to verify the issues
-- Suggest fixes based on the bug descriptions and recommendations
-- Create tasks from the bug list if there are multiple bugs
+- Suggest fixes based on descriptions and recommendations
+- Treat `severity: "severe"` bugs as the top priority; "non-severe" bugs second; then items with `needsInvestigation: true`; other analyses last
 - If the user's codebase is available, read the flagged files and propose concrete fixes

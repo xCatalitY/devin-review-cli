@@ -3,11 +3,19 @@
 import { parseArgs } from "node:util";
 import { parsePR } from "./parse-pr.js";
 import { getToken, forceReauth, AuthRequiredError } from "./auth.js";
-import { fetchDigest, fetchJobs, getReviewStatus, AuthExpiredError, ApiError } from "./api.js";
+import {
+  fetchJobResult,
+  fetchJobs,
+  getReviewStatus,
+  pickLatestJobVersion,
+  AuthExpiredError,
+  ApiError,
+  type JobsResponse,
+} from "./api.js";
 import { extractFlags } from "./filter.js";
 import { formatTerminal, formatJSON } from "./format.js";
 import { watchReview, WatchTimeoutError } from "./watch.js";
-import type { ReviewStatus } from "./types.js";
+import type { JobResultResponse, ReviewStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
@@ -27,15 +35,17 @@ const HELP = `
                               https://app.devin.ai/review/owner/repo/pull/123
 
   \x1b[1mOptions:\x1b[0m
-    --json          Output as JSON (for piping)
-    --all           Include analysis/suggestions, not just bugs
-    --watch         Poll until Devin review completes, show progress
-    --raw           Dump raw API response (debug)
-    --no-cache      Force re-authentication
-    --login         Just authenticate, don't fetch anything
-    --logout        Clear stored credentials
-    --help, -h      Show this help
-    --version, -v   Show version
+    --json            Output as JSON (for piping)
+    --bugs-only       Only surface Bugs (hide Flags / analyses)
+    --flags-only      Only surface Flags / analyses (hide Bugs)
+    --include-resolved  Include bugs Devin has self-resolved in a later commit
+    --watch           Poll until Devin review completes, show progress
+    --raw             Dump raw API response (debug)
+    --no-cache        Force re-authentication
+    --login           Just authenticate, don't fetch anything
+    --logout          Clear stored credentials
+    --help, -h        Show this help
+    --version, -v     Show version
 
   \x1b[1mEnvironment:\x1b[0m
     DEVIN_TOKEN     Skip browser auth, use this token directly
@@ -43,7 +53,7 @@ const HELP = `
   \x1b[1mExamples:\x1b[0m
     devin-bugs owner/repo#46
     devin-bugs owner/repo#46 --json
-    devin-bugs owner/repo#46 --all --raw
+    devin-bugs owner/repo#46 --bugs-only --raw
     DEVIN_TOKEN=xxx devin-bugs owner/repo#46
 `;
 
@@ -52,7 +62,7 @@ function printHelp(): void {
 }
 
 function printVersion(): void {
-  console.log("devin-bugs 0.6.0");
+  console.log("devin-bugs 0.7.0");
 }
 
 // ---------------------------------------------------------------------------
@@ -66,7 +76,9 @@ async function main(): Promise<void> {
       allowPositionals: true,
       options: {
         json: { type: "boolean", default: false },
-        all: { type: "boolean", default: false },
+        "bugs-only": { type: "boolean", default: false },
+        "flags-only": { type: "boolean", default: false },
+        "include-resolved": { type: "boolean", default: false },
         watch: { type: "boolean", default: false },
         raw: { type: "boolean", default: false },
         "no-cache": { type: "boolean", default: false },
@@ -183,69 +195,103 @@ async function main(): Promise<void> {
     }
   }
 
-  // Fetch digest (with one retry on auth failure)
-  let digest;
+  // Fetch jobs (for status + to find the latest completed review version)
+  let jobsData: JobsResponse;
   try {
-    digest = await fetchDigest(pr.prPath, token);
+    jobsData = await withAuthRetry(() => fetchJobs(pr.prPath, token), async () => {
+      token = await forceReauth();
+    });
   } catch (err) {
-    if (err instanceof AuthExpiredError) {
-      // Re-authenticate and retry
-      console.error("\x1b[33m▸ Token expired, re-authenticating...\x1b[0m");
-      try {
-        token = await forceReauth();
-        digest = await fetchDigest(pr.prPath, token);
-      } catch (retryErr: any) {
-        if (retryErr instanceof AuthRequiredError) {
-          console.error(`\x1b[33m⚠ Authentication required\x1b[0m`);
-          console.error(`  devin-bugs needs you to log in via your browser.`);
-          console.error(`  Run: \x1b[1mdevin-bugs --login\x1b[0m`);
-          console.error(`  Or set DEVIN_TOKEN environment variable for non-interactive use.`);
-          process.exit(10);
-        }
-        console.error(`\x1b[31mError:\x1b[0m ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`);
-        process.exit(1);
-      }
-    } else if (err instanceof ApiError) {
-      if (err.status === 404) {
-        console.error(
-          `\x1b[31mError:\x1b[0m PR not found or no Devin review exists for ${pr.owner}/${pr.repo}#${pr.number}`
-        );
-      } else {
-        console.error(`\x1b[31mAPI error ${err.status}:\x1b[0m ${err.body}`);
-      }
-      process.exit(1);
-    } else {
-      throw err;
-    }
+    handleFetchError(err, pr);
+    return; // unreachable
   }
 
-  // --raw: dump full response
-  if (values.raw) {
-    console.log(JSON.stringify(digest, null, 2));
+  const reviewStatus: ReviewStatus = getReviewStatus(jobsData);
+  const pick = pickLatestJobVersion(jobsData);
+
+  // No completed review yet: print the banner and exit without trying job-result
+  if (!pick) {
+    if (values.json) {
+      console.log(formatJSON([], reviewStatus));
+    } else {
+      console.log(formatTerminal([], pr, reviewStatus));
+    }
     return;
   }
 
-  // Always fetch job status for review state
-  let reviewStatus: ReviewStatus | undefined;
+  // Fetch job-result (the actual lifeguard bugs + analyses)
+  let jobResult: JobResultResponse;
   try {
-    const jobsData = await fetchJobs(pr.prPath, token);
-    reviewStatus = getReviewStatus(jobsData);
+    jobResult = await withAuthRetry(
+      () => fetchJobResult(pr.prPath, pick.jobId, pick.versionId, token),
+      async () => {
+        token = await forceReauth();
+      }
+    );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`\x1b[33m▸ Could not fetch review status: ${msg}\x1b[0m`);
+    handleFetchError(err, pr);
+    return; // unreachable
   }
 
-  // Extract and filter flags
-  const flags = extractFlags(digest!, {
-    includeAnalysis: values.all,
+  // --raw: dump full job-result
+  if (values.raw) {
+    console.log(JSON.stringify(jobResult, null, 2));
+    return;
+  }
+
+  const flags = extractFlags(jobResult, {
+    includeResolved: values["include-resolved"],
+    bugsOnly: values["bugs-only"],
+    flagsOnly: values["flags-only"],
   });
 
-  // Output
   if (values.json) {
     console.log(formatJSON(flags, reviewStatus));
   } else {
     console.log(formatTerminal(flags, pr, reviewStatus));
   }
+}
+
+// ---------------------------------------------------------------------------
+// Shared fetch helpers
+// ---------------------------------------------------------------------------
+
+async function withAuthRetry<T>(
+  run: () => Promise<T>,
+  refresh: () => Promise<void>
+): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof AuthExpiredError) {
+      console.error("\x1b[33m▸ Token expired, re-authenticating...\x1b[0m");
+      await refresh();
+      return run();
+    }
+    throw err;
+  }
+}
+
+function handleFetchError(err: unknown, pr: { owner: string; repo: string; number: number }): never {
+  if (err instanceof AuthRequiredError) {
+    console.error(`\x1b[33m⚠ Authentication required\x1b[0m`);
+    console.error(`  devin-bugs needs you to log in via your browser.`);
+    console.error(`  Run: \x1b[1mdevin-bugs --login\x1b[0m`);
+    console.error(`  Or set DEVIN_TOKEN environment variable for non-interactive use.`);
+    process.exit(10);
+  }
+  if (err instanceof ApiError) {
+    if (err.status === 404) {
+      console.error(
+        `\x1b[31mError:\x1b[0m PR not found or no Devin review exists for ${pr.owner}/${pr.repo}#${pr.number}`
+      );
+    } else {
+      console.error(`\x1b[31mAPI error ${err.status}:\x1b[0m ${err.body}`);
+    }
+    process.exit(1);
+  }
+  console.error(`\x1b[31mError:\x1b[0m ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------

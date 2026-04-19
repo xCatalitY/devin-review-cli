@@ -3,3 +3,4 @@ bun.lock
 *.tsbuildinfo
 dist/
 .DS_Store
+.playwright-mcp/

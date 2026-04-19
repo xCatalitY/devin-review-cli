@@ -18,36 +18,21 @@ const c = {
   bgBlue: "\x1b[44m",
 };
 
-function severityColor(severity: string): string {
-  switch (severity.toLowerCase()) {
-    case "severe":
-    case "critical":
-      return c.red;
-    case "warning":
-      return c.yellow;
-    default:
-      return c.cyan;
+function flagBadge(flag: LifeguardFlag): string {
+  if (flag.type === "lifeguard-bug") {
+    if (flag.severity === "severe") {
+      return `${c.bgRed}${c.white}${c.bold} BUG ${c.reset}`;
+    }
+    return `${c.bgYellow}${c.bold} BUG ${c.reset}`;
   }
+  if (flag.needsInvestigation) {
+    return `${c.bgYellow}${c.bold} INVESTIGATE ${c.reset}`;
+  }
+  return `${c.bgBlue}${c.white} FLAG ${c.reset}`;
 }
 
-function severityBadge(severity: string): string {
-  const upper = severity.toUpperCase();
-  switch (severity.toLowerCase()) {
-    case "severe":
-    case "critical":
-      return `${c.bgRed}${c.white}${c.bold} ${upper} ${c.reset}`;
-    case "warning":
-      return `${c.bgYellow}${c.bold} ${upper} ${c.reset}`;
-    default:
-      return `${c.bgBlue}${c.white} ${upper} ${c.reset}`;
-  }
-}
-
-function typeBadge(type: LifeguardFlag["type"]): string {
-  if (type === "lifeguard-bug") {
-    return `${c.red}${c.bold}BUG${c.reset}`;
-  }
-  return `${c.cyan}${c.bold}INFO${c.reset}`;
+function resolvedBadge(): string {
+  return `${c.dim}(resolved)${c.reset}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,14 +120,32 @@ export function formatTerminal(flags: LifeguardFlag[], pr: ParsedPR, status?: Re
 
   // Header
   const bugCount = flags.filter((f) => f.type === "lifeguard-bug").length;
-  const analysisCount = flags.filter((f) => f.type === "lifeguard-analysis").length;
+  const investigateCount = flags.filter(
+    (f) => f.type === "lifeguard-analysis" && f.needsInvestigation
+  ).length;
+  const otherAnalysisCount = flags.filter(
+    (f) => f.type === "lifeguard-analysis" && !f.needsInvestigation
+  ).length;
 
   const parts: string[] = [];
-  if (bugCount > 0) parts.push(`${c.red}${c.bold}${bugCount} bug${bugCount === 1 ? "" : "s"}${c.reset}`);
-  if (analysisCount > 0) parts.push(`${c.cyan}${analysisCount} suggestion${analysisCount === 1 ? "" : "s"}${c.reset}`);
+  if (bugCount > 0) {
+    parts.push(`${c.red}${c.bold}${bugCount} bug${bugCount === 1 ? "" : "s"}${c.reset}`);
+  }
+  if (investigateCount > 0) {
+    parts.push(
+      `${c.yellow}${c.bold}${investigateCount} to investigate${c.reset}`
+    );
+  }
+  if (otherAnalysisCount > 0) {
+    parts.push(
+      `${c.cyan}${otherAnalysisCount} flag${otherAnalysisCount === 1 ? "" : "s"}${c.reset}`
+    );
+  }
 
   if (parts.length === 0) {
-    lines.push(`\n  ${c.green}${c.bold}No unresolved bugs${c.reset} in ${c.dim}${pr.owner}/${pr.repo}#${pr.number}${c.reset}\n`);
+    lines.push(
+      `\n  ${c.green}${c.bold}Nothing to review${c.reset} in ${c.dim}${pr.owner}/${pr.repo}#${pr.number}${c.reset}\n`
+    );
     return lines.join("\n");
   }
 
@@ -152,11 +155,11 @@ export function formatTerminal(flags: LifeguardFlag[], pr: ParsedPR, status?: Re
 
   // Each flag
   for (const flag of flags) {
-    const badge = typeBadge(flag.type);
+    const badge = flagBadge(flag);
     const location = formatLocation(flag);
-    const sev = severityBadge(flag.severity);
+    const resolved = flag.isResolved ? ` ${resolvedBadge()}` : "";
 
-    lines.push(`  ${badge}  ${location}  ${sev}`);
+    lines.push(`  ${badge}  ${location}${resolved}`);
 
     if (flag.title) {
       lines.push(`  ${c.bold}${c.white}${flag.title}${c.reset}`);
@@ -205,8 +208,15 @@ export function formatTerminal(flags: LifeguardFlag[], pr: ParsedPR, status?: Re
 // ---------------------------------------------------------------------------
 
 export function formatJSON(flags: LifeguardFlag[], status?: ReviewStatus): string {
-  return JSON.stringify({
-    status: status ?? null,
-    bugs: flags,
-  }, null, 2);
+  const bugs = flags.filter((f) => f.type === "lifeguard-bug");
+  const analyses = flags.filter((f) => f.type === "lifeguard-analysis");
+  return JSON.stringify(
+    {
+      status: status ?? null,
+      bugs,
+      analyses,
+    },
+    null,
+    2
+  );
 }

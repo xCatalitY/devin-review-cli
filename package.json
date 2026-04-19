@@ -1,7 +1,7 @@
 {
   "name": "devin-bugs",
-  "version": "0.6.0",
-  "description": "CLI to extract unresolved bugs from Devin AI code reviews",
+  "version": "0.7.0",
+  "description": "CLI to extract unresolved bugs and flags from Devin AI code reviews",
   "type": "module",
   "bin": {
     "devin-bugs": "dist/cli.js"

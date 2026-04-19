@@ -1,183 +1,86 @@
-import type { DigestResponse, ReviewThread, ReviewComment, LifeguardFlag } from "./types.js";
+import type {
+  JobResultResponse,
+  LifeguardAnalysis,
+  LifeguardBug,
+  LifeguardFlag,
+} from "./types.js";
 
-// ---------------------------------------------------------------------------
-// Parse hidden_header: <!-- devin-review-comment {JSON} -->
-// ---------------------------------------------------------------------------
-
-interface HiddenHeaderData {
-  id: string;
-  file_path: string;
-  start_line: number;
-  end_line: number;
-  side: "LEFT" | "RIGHT";
+export interface FilterOptions {
+  /** Include bugs Devin has self-resolved in a later commit (default: false). */
+  includeResolved?: boolean;
+  /** Skip analyses ("Flags") — only surface bugs (default: false). */
+  bugsOnly?: boolean;
+  /** Skip bugs — only surface analyses ("Flags") (default: false). */
+  flagsOnly?: boolean;
 }
 
-function parseHiddenHeader(header: string | null | undefined): HiddenHeaderData | null {
-  if (!header) return null;
-
-  // Format: <!-- devin-review-comment {"id":"...","file_path":"...","start_line":N,...} -->
-  const match = header.match(/<!--\s*devin-review-comment\s*(\{.+\})\s*-->/);
-  if (!match?.[1]) return null;
-
-  try {
-    const data = JSON.parse(match[1]) as Record<string, unknown>;
-    return {
-      id: String(data.id ?? ""),
-      file_path: String(data.file_path ?? ""),
-      start_line: typeof data.start_line === "number" ? data.start_line : 0,
-      end_line: typeof data.end_line === "number" ? data.end_line : 0,
-      side: data.side === "LEFT" ? "LEFT" : "RIGHT",
-    };
-  } catch {
-    return null;
-  }
+function extractSuggestedEdit(edit: LifeguardBug["suggested_edit"]): string {
+  if (!edit) return "";
+  if (typeof edit === "string") return edit;
+  if (typeof edit === "object" && typeof edit.prompt === "string") return edit.prompt;
+  return "";
 }
 
-// ---------------------------------------------------------------------------
-// Parse bug body: emoji severity + bold title + description
-// ---------------------------------------------------------------------------
-
-function parseSeverity(body: string): string {
-  if (body.startsWith("🔴")) return "severe";
-  if (body.startsWith("🟡")) return "warning";
-  if (body.startsWith("🟢")) return "info";
-  return "info";
-}
-
-function parseTitle(body: string): string {
-  const match = body.match(/\*\*(.+?)\*\*/);
-  return match?.[1]?.trim() ?? body.split("\n")[0]?.slice(0, 120).trim() ?? "";
-}
-
-function parseDescription(body: string): string {
-  // Everything after the first line (title line)
-  const lines = body.split("\n");
-  return lines
-    .slice(1)
-    .join("\n")
-    .trim();
-}
-
-function parseRecommendation(body: string): string {
-  // Look for "Recommendation:" or "Fix:" or "→" sections
-  const match = body.match(/(?:recommendation|suggested fix|fix):\s*(.+?)(?:\n\n|\n#+|\n🔴|\n🟡|$)/is);
-  return match?.[1]?.trim() ?? "";
-}
-
-// ---------------------------------------------------------------------------
-// Determine flag type from the comment body/id
-// ---------------------------------------------------------------------------
-
-function determineType(id: string, body: string): LifeguardFlag["type"] {
-  if (id.startsWith("BUG_")) return "lifeguard-bug";
-  if (id.startsWith("ANALYSIS_") || id.startsWith("INFO_")) return "lifeguard-analysis";
-
-  // Fallback: check body for bug indicators
-  const lower = body.toLowerCase();
-  if (
-    lower.includes("potential bug") ||
-    lower.includes("🔴") ||
-    lower.includes("bug:") ||
-    lower.includes("race condition") ||
-    lower.includes("vulnerability") ||
-    lower.includes("double-charge") ||
-    lower.includes("sql injection")
-  ) {
-    return "lifeguard-bug";
-  }
-  return "lifeguard-analysis";
-}
-
-// ---------------------------------------------------------------------------
-// Extract a LifeguardFlag from a Devin review thread
-// ---------------------------------------------------------------------------
-
-function extractFlag(
-  thread: ReviewThread,
-  comment: ReviewComment
-): LifeguardFlag | null {
-  const header = parseHiddenHeader(comment.hidden_header);
-  const body = comment.body ?? "";
-  if (!body && !header) return null;
-
-  const id = header?.id ?? String(comment.devin_review_id ?? "");
-  const type = determineType(id, body);
-
+function bugToFlag(b: LifeguardBug): LifeguardFlag {
   return {
-    filePath: header?.file_path ?? "",
-    startLine: header?.start_line ?? null,
-    endLine: header?.end_line ?? null,
-    side: header?.side ?? "RIGHT",
-    title: parseTitle(body),
-    description: parseDescription(body),
-    severity: parseSeverity(body),
-    recommendation: parseRecommendation(body),
-    needsInvestigation: body.toLowerCase().includes("needs investigation"),
-    type,
-    isResolved: thread.is_resolved,
-    isOutdated: thread.is_outdated,
-    htmlUrl: comment.html_url ?? null,
+    id: b.id,
+    filePath: b.file_path,
+    startLine: typeof b.start_line === "number" ? b.start_line : null,
+    endLine: typeof b.end_line === "number" ? b.end_line : null,
+    side: b.side === "LEFT" ? "LEFT" : "RIGHT",
+    title: b.title ?? "",
+    description: b.description ?? "",
+    severity: b.severity ?? "non-severe",
+    recommendation: extractSuggestedEdit(b.suggested_edit),
+    needsInvestigation: false,
+    type: "lifeguard-bug",
+    isResolved: b.resolved_by_devin === true,
+    htmlUrl: null,
   };
 }
 
-// ---------------------------------------------------------------------------
-// Identify Devin review comments
-// ---------------------------------------------------------------------------
-
-function isDevinComment(comment: ReviewComment): boolean {
-  return (
-    comment.devin_review_id != null ||
-    comment.hidden_header?.includes("devin-review-comment") === true ||
-    comment.author?.login === "devin-ai-integration" ||
-    comment.author?.login === "devin-ai-integration[bot]" ||
-    comment.author?.login === "devin-ai[bot]"
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-export interface FilterOptions {
-  /** Include lifeguard-analysis items, not just bugs */
-  includeAnalysis?: boolean;
-  /** Include resolved items */
-  includeResolved?: boolean;
-  /** Include outdated items */
-  includeOutdated?: boolean;
+function analysisToFlag(a: LifeguardAnalysis): LifeguardFlag {
+  return {
+    id: a.id,
+    filePath: a.file_path,
+    startLine: typeof a.start_line === "number" ? a.start_line : null,
+    endLine: typeof a.end_line === "number" ? a.end_line : null,
+    side: a.side === "LEFT" ? "LEFT" : "RIGHT",
+    title: a.title ?? "",
+    description: a.analysis ?? "",
+    severity: a.needs_investigation ? "investigate" : "info",
+    recommendation: "",
+    needsInvestigation: a.needs_investigation === true,
+    type: "lifeguard-analysis",
+    isResolved: false,
+    htmlUrl: null,
+  };
 }
 
 /**
- * Extract all LifeguardFlags from a digest response.
- * Default: only unresolved, non-outdated bugs.
+ * Extract the display-ready set of Lifeguard findings from a job-result.
+ * By default: all unresolved bugs + all analyses (the UI's "Flags").
  */
 export function extractFlags(
-  digest: DigestResponse,
+  jobResult: JobResultResponse,
   opts?: FilterOptions
 ): LifeguardFlag[] {
-  const flags: LifeguardFlag[] = [];
+  const bugs = jobResult.lifeguard_result?.bugs ?? [];
+  const analyses = jobResult.lifeguard_result?.analyses ?? [];
+  const out: LifeguardFlag[] = [];
 
-  for (const thread of digest.review_threads) {
-    // Apply thread-level filters
-    if (!opts?.includeResolved && thread.is_resolved) continue;
-    if (!opts?.includeOutdated && thread.is_outdated) continue;
-
-    // Extract from first Devin comment in the thread
-    for (const comment of thread.comments) {
-      if (!isDevinComment(comment)) continue;
-
-      const flag = extractFlag(thread, comment);
-      if (flag) {
-        flags.push(flag);
-        break; // One flag per thread
-      }
+  if (!opts?.flagsOnly) {
+    for (const b of bugs) {
+      if (!opts?.includeResolved && b.resolved_by_devin) continue;
+      out.push(bugToFlag(b));
     }
   }
 
-  // Filter by type
-  if (!opts?.includeAnalysis) {
-    return flags.filter((f) => f.type === "lifeguard-bug");
+  if (!opts?.bugsOnly) {
+    for (const a of analyses) {
+      out.push(analysisToFlag(a));
+    }
   }
 
-  return flags;
+  return out;
 }

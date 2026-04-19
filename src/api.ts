@@ -1,5 +1,5 @@
 import { DEVIN_API_BASE } from "./config.js";
-import type { DigestResponse, ReviewStatus } from "./types.js";
+import type { JobResultResponse, ReviewStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Error classes
@@ -50,26 +50,6 @@ async function apiRequest<T>(path: string, token: string): Promise<T> {
 // Endpoints
 // ---------------------------------------------------------------------------
 
-export async function fetchDigest(
-  prPath: string,
-  token: string
-): Promise<DigestResponse> {
-  return apiRequest<DigestResponse>(
-    `pr-review/digest?pr_path=${encodeURIComponent(prPath)}`,
-    token
-  );
-}
-
-export async function fetchPRInfo(
-  prPath: string,
-  token: string
-): Promise<Record<string, unknown>> {
-  return apiRequest<Record<string, unknown>>(
-    `pr-review/info?pr_path=${encodeURIComponent(prPath)}`,
-    token
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Job status types
 // ---------------------------------------------------------------------------
@@ -106,6 +86,51 @@ export async function fetchJobs(
     `pr-review/jobs?pr_path=${encodeURIComponent(prPath)}`,
     token
   );
+}
+
+export async function fetchJobResult(
+  prPath: string,
+  jobId: string,
+  versionId: string,
+  token: string
+): Promise<JobResultResponse> {
+  return apiRequest<JobResultResponse>(
+    `pr-review/job-result/${encodeURIComponent(jobId)}/${encodeURIComponent(versionId)}?pr_path=${encodeURIComponent(prPath)}`,
+    token
+  );
+}
+
+/**
+ * Pick the job + version whose result we should display.
+ * Prefers the most recent completed job; falls back to the most recent job
+ * with a finished version (useful while a later job is still running).
+ */
+export function pickLatestJobVersion(
+  jobs: JobsResponse
+): { jobId: string; versionId: string } | null {
+  const sorted = [...jobs.jobs].sort(
+    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+  );
+
+  const finishedVersion = (job: ReviewJob): JobVersion | null => {
+    for (let i = job.versions.length - 1; i >= 0; i--) {
+      if (job.versions[i]!.metadata.is_finished) return job.versions[i]!;
+    }
+    return null;
+  };
+
+  for (const job of sorted) {
+    if (job.status !== "completed") continue;
+    const v = finishedVersion(job);
+    if (v) return { jobId: job.job_id, versionId: v.id };
+  }
+
+  for (const job of sorted) {
+    const v = finishedVersion(job);
+    if (v) return { jobId: job.job_id, versionId: v.id };
+  }
+
+  return null;
 }
 
 /**
